@@ -10,6 +10,7 @@ TOKEN = os.environ["TOKEN"]
 SERVER_ID = int(os.environ["SERVER_ID"])
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 ROLE_ID = int(os.environ["ROLE_ID"])
+ROLE_ID = int(os.environ.get("ROLE_ID"))
 PORT = int(os.environ.get("PORT", 8080))
 
 # ===== DISCORD =====
@@ -35,46 +36,47 @@ async def on_ready():
     process_queue.start()
 
 @tasks.loop(seconds=1)
-async def process_queue():
-    while not queue.empty():
-        data = await queue.get()
-        discord_id = int(data["discordId"])
-        result = data["result"]
+async def process_messages():
+    while not message_queue.empty():
+        data = await message_queue.get()
+        discord_id = int(data.get("discordId"))
+        result = data.get("result")
 
         await send_dm(discord_id, result)
         await send_server_message(discord_id, result)
+
+        # 👉 RANG OSZTÁS
         await give_role(discord_id)
 
+
 # ===== ACTIONS =====
-async def send_dm(user_id, result):
-    try:
-        user = await bot.fetch_user(user_id)
-        await user.send(f"🎉 Teszt eredményed: **{result}**")
-    except Exception as e:
-        print("DM error:", e)
-
-async def send_server_message(user_id, result):
-    try:
-        channel = bot.get_channel(CHANNEL_ID)
-        await channel.send(f"<@{user_id}> sikeresen teljesítette a tesztet! ✅")
-    except Exception as e:
-        print("Channel error:", e)
-
-async def give_role(user_id):
+async def give_role(user_id: int):
     try:
         guild = bot.get_guild(SERVER_ID)
-        member = await guild.fetch_member(user_id)
-        role = guild.get_role(ROLE_ID)
-
-        if role in member.roles:
-            print("ℹ️ Rang már megvan")
+        if not guild:
+            print("Szerver nem található")
             return
 
-        await member.add_roles(role)
-        print("✅ Rang kiosztva")
+        member = guild.get_member(user_id)
+        if not member:
+            print("Felhasználó nincs a szerveren")
+            return
+
+        role = guild.get_role(ROLE_ID)
+        if not role:
+            print("Rang nem található")
+            return
+
+        if role in member.roles:
+            print("Rang már megvan")
+            return
+
+        await member.add_roles(role, reason="TG sikeres")
+        print(f"Rang kiosztva: {member.name}")
 
     except Exception as e:
-        print("Role error:", e)
+        print(f"Role error: {e}")
+
 
 # ===== RUN API =====
 def run_api():
