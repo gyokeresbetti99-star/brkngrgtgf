@@ -5,11 +5,13 @@ import discord
 from discord.ext import commands
 import threading
 
+
 # Környezeti változók
-TOKEN = os.environ.get("TOKEN")           # Discord bot token
-SERVER_ID = int(os.environ.get("1468407486041297125"))   # Discord szerver ID
-CHANNEL_ID = int(os.environ.get("1469401441926905916")) # Discord szöveges csatorna ID
+TOKEN = os.environ.get("TOKEN")                # Discord bot token
+SERVER_ID = int(os.environ.get("SERVER_ID"))   # Discord szerver ID
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID")) # Discord csatorna ID
 PORT = int(os.environ.get("PORT", 3000))      # Railway adja a PORT-ot
+
 
 # Discord bot setup
 intents = discord.Intents.default()
