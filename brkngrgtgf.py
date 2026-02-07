@@ -1,8 +1,9 @@
 import os
 import asyncio
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, Request
 import discord
 from discord.ext import commands
+import uvicorn
 
 # Környezeti változók
 TOKEN = os.environ.get("TOKEN")                 # Discord bot token
@@ -15,35 +16,36 @@ intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Flask setup a webhookhoz
-app = Flask(__name__)
+# FastAPI app setup
+app = FastAPI()
 
-# Egy aszinkron Queue a webhook üzenetek tárolásához
+# Async Queue a webhook üzenetekhez
 message_queue = asyncio.Queue()
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
+@app.post("/webhook")
+async def webhook(request: Request):
+    data = await request.json()
     print("Webhook received:", data)
+
     discord_id_raw = data.get("discordId")
     result = data.get("result")
 
     if not discord_id_raw or not result:
-        print("Invalid webhook data")
-        return jsonify({"status": "error", "message": "Missing discordId or result"}), 400
+        return {"status": "error", "message": "Missing discordId or result"}, 400
 
     try:
         discord_id = int(discord_id_raw)
     except Exception as e:
         print(f"Invalid Discord ID: {discord_id_raw}, error: {e}")
-        return jsonify({"status": "error", "message": "Invalid discordId"}), 400
+        return {"status": "error", "message": "Invalid discordId"}, 400
 
     # Üzenet berakása a queue-ba
-    message_queue.put_nowait((discord_id, result))
+    await message_queue.put((discord_id, result))
 
-    # Azonnali válasz a webhooknak
-    return jsonify({"status": "ok"}), 200
+    # Azonnali válasz a webhooknak → nincs 502
+    return {"status": "ok"}
 
+# Queue worker feldolgozza az üzeneteket
 async def message_worker():
     await bot.wait_until_ready()
     while True:
@@ -53,8 +55,9 @@ async def message_worker():
             await send_server_message(discord_id, result)
         except Exception as e:
             print(f"Worker error: {e}")
-        await asyncio.sleep(0.1)  # kis szünet a loopban
+        await asyncio.sleep(0.1)
 
+# DM küldés
 async def send_dm(user_id, result):
     try:
         user = await bot.fetch_user(user_id)
@@ -66,6 +69,7 @@ async def send_dm(user_id, result):
     except Exception as e:
         print(f"DM error for {user_id}: {e}")
 
+# Szerver üzenet küldés
 async def send_server_message(user_id, result):
     try:
         channel = bot.get_channel(CHANNEL_ID)
@@ -77,18 +81,14 @@ async def send_server_message(user_id, result):
     except Exception as e:
         print(f"Server message error for channel {CHANNEL_ID}: {e}")
 
-# Flask és Discord futtatása ugyanabban az async loopban
-def start_app():
+# Indítás
+if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     # Indítsuk a queue worker-t
     loop.create_task(message_worker())
-    # Indítsuk a Flask ASGI szerveren (Hypercorn)
-    import hypercorn.asyncio
-    from hypercorn.config import Config
-    config = Config()
-    config.bind = [f"0.0.0.0:{PORT}"]
-    loop.run_until_complete(hypercorn.asyncio.serve(app, config))
 
-# Indítás
-if __name__ == "__main__":
-    asyncio.run(bot.start(TOKEN))  # Ez indítja a botot
+    # Discord bot indítása külön taskban
+    loop.create_task(bot.start(TOKEN))
+
+    # FastAPI ASGI szerver indítása
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
