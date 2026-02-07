@@ -1,9 +1,9 @@
 import os
-import asyncio
+import threading
+import queue  # <-- THREAD-SAFE QUEUE
 from fastapi import FastAPI, Request
 import discord
 from discord.ext import commands, tasks
-import threading
 
 # ===== ENV =====
 TOKEN = os.environ["TOKEN"]
@@ -21,128 +21,100 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== API =====
 app = FastAPI()
-queue = asyncio.Queue()
+message_queue = queue.Queue()  # <-- THREAD-SAFE
 
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-    await queue.put(data)
+    message_queue.put(data)  # <-- NEM await, sima put
     return {"status": "ok"}
 
 # ===== BOT READY =====
 @bot.event
 async def on_ready():
-    print(f"✅ Bot ready: {bot.user} | Guilds: {[g.id for g in bot.guilds]}")
+    print(f"✅ Bot ready: {bot.user} | Guilds: {[g.id for g in bot.guilds]}", flush=True)
     process_queue.start()
 
 # ===== QUEUE PROCESSOR =====
 @tasks.loop(seconds=1)
 async def process_queue():
-    while not queue.empty():
-        data = await queue.get()
+    while not message_queue.empty():
+        data = message_queue.get()
 
-        try:
-            discord_id = int(data.get("discordId"))
-            result = data.get("result")
+        discord_id = int(data.get("discordId"))
+        result = data.get("result")
 
-            print(f"📩 Webhook received: discordId={discord_id}, result={result}")
+        print(f"📩 Processing: discordId={discord_id}, result={result}", flush=True)
 
-            await send_dm(discord_id, result)
-            await send_server_message(discord_id, result)
-
-            # ✅ csak akkor adjon rangot, ha sikeres
-            if str(result).lower() in ["sikeres", "success", "ok", "pass", "true", "1"]:
-                await give_role(discord_id)
-            else:
-                print("ℹ️ Result nem 'sikeres', ezért nem osztok rangot.")
-
-        except Exception as e:
-            print(f"❌ process_queue error: {e}")
+        await send_dm(discord_id, result)
+        await send_server_message(discord_id, result)
+        await give_role(discord_id)
 
 # ===== ACTIONS =====
 async def send_dm(user_id, result):
     try:
         user = await bot.fetch_user(user_id)
         await user.send(f"Teszt eredményed: {result}")
-        print("✅ DM sent")
+        print("✅ DM sent", flush=True)
     except Exception as e:
-        print(f"DM error: {e}")
+        print(f"DM error: {e}", flush=True)
 
 async def send_server_message(user_id, result):
     try:
         channel = bot.get_channel(CHANNEL_ID)
         if channel:
             await channel.send(f"<@{user_id}> Teszt eredmény: {result}")
-            print("✅ Channel message sent")
+            print("✅ Channel message sent", flush=True)
         else:
-            print("❌ Channel not found (CHANNEL_ID wrong or bot has no access)")
+            print("❌ Channel not found", flush=True)
     except Exception as e:
-        print(f"Channel message error: {e}")
+        print(f"Channel message error: {e}", flush=True)
 
-# ===== ROLE (HARD DEBUG) =====
 async def give_role(user_id: int):
     try:
         guild = bot.get_guild(SERVER_ID)
         if not guild:
-            print(f"❌ Guild not found. SERVER_ID={SERVER_ID} | bot guilds={[g.id for g in bot.guilds]}")
+            print(f"❌ Guild not found. SERVER_ID={SERVER_ID}", flush=True)
             return
 
-        # Member: cache -> fetch fallback
-        member = guild.get_member(user_id)
-        if member is None:
-            print("ℹ️ Member not in cache -> fetch_member()")
-            member = await guild.fetch_member(user_id)
+        # fetch_member biztosan API-ból jön
+        member = await guild.fetch_member(user_id)
 
         role = guild.get_role(ROLE_ID)
         if role is None:
-            print(f"❌ Role not found. ROLE_ID={ROLE_ID}")
-            print("ℹ️ Available role IDs:", [r.id for r in guild.roles])
+            print(f"❌ Role not found. ROLE_ID={ROLE_ID}", flush=True)
             return
 
-        # Bot saját member objektuma
-        bot_member = guild.get_member(bot.user.id)
-        if bot_member is None:
-            bot_member = await guild.fetch_member(bot.user.id)
+        bot_member = guild.get_member(bot.user.id) or await guild.fetch_member(bot.user.id)
 
-        # HARD DEBUG
-        print("====== ROLE DEBUG ======")
-        print(f"Guild: {guild.name} ({guild.id})")
-        print(f"Target member: {member} ({member.id})")
-        print(f"Target role: {role.name} ({role.id}) managed={role.managed}")
-        print(f"Bot top role: {bot_member.top_role.name} ({bot_member.top_role.id})")
-        print(f"Bot perms: manage_roles={bot_member.guild_permissions.manage_roles} admin={bot_member.guild_permissions.administrator}")
-        print("========================")
+        print("====== ROLE DEBUG ======", flush=True)
+        print(f"Target member: {member} ({member.id})", flush=True)
+        print(f"Target role: {role.name} ({role.id}) managed={role.managed}", flush=True)
+        print(f"Bot top role: {bot_member.top_role.name} ({bot_member.top_role.id})", flush=True)
+        print(f"Bot perms: manage_roles={bot_member.guild_permissions.manage_roles} admin={bot_member.guild_permissions.administrator}", flush=True)
+        print("========================", flush=True)
 
-        # 1) managed role nem osztható
         if role.managed:
-            print("❌ Ez a role 'managed' (integráció/automata), Discord nem engedi kiosztani.")
+            print("❌ Managed role (integráció), nem osztható.", flush=True)
             return
 
-        # 2) permission check
-        if not bot_member.guild_permissions.manage_roles and not bot_member.guild_permissions.administrator:
-            print("❌ Botnak nincs Manage Roles (guild szinten).")
-            return
-
-        # 3) hierarchia check
         if bot_member.top_role <= role:
-            print("❌ Role hierarchy: bot top_role <= target role. Emeld a bot rangját még feljebb!")
+            print("❌ Role hierarchy: bot top_role <= target role", flush=True)
             return
 
-        # 4) már megvan?
         if role in member.roles:
-            print("ℹ️ Member already has role.")
+            print("ℹ️ Member already has role", flush=True)
             return
 
-        # 5) add role
         await member.add_roles(role, reason="Webhook alapú rangosztás")
-        print(f"✅ ROLE ADDED OK -> {member} got {role.name}")
+        print(f"✅ ROLE ADDED -> {member} got {role.name}", flush=True)
 
     except discord.Forbidden:
-        print("❌ Forbidden: Discord tiltja (legtöbbször hierarchy vagy nincs Manage Roles).")
+        print("❌ Forbidden (permission/hierarchy)", flush=True)
     except discord.NotFound:
-        print("❌ NotFound: a felhasználó nincs a szerveren (vagy rossz ID).")
+        print("❌ NotFound (user not in guild / bad ID)", flush=True)
     except Exception as e:
-        print(f"❌ ROLE ERROR: {type(e).__name__}: {e}")
+        print(f"❌ ROLE ERROR: {type(e).__name__}: {e}", flush=True)
 
 # ===== RUN API =====
 def run_api():
