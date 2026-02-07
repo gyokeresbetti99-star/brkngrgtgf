@@ -1,15 +1,14 @@
 import os
 import asyncio
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import discord
 from discord.ext import commands
-import threading
 
 # Környezeti változók
-TOKEN = os.environ.get("TOKEN")                # Discord bot token
-SERVER_ID = int(os.environ.get("SERVER_ID"))   # Discord szerver ID
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID")) # Discord csatorna ID
-PORT = int(os.environ.get("PORT", 3000))      # Railway adja a PORT-ot
+TOKEN = os.environ.get("TOKEN")                 # Discord bot token
+SERVER_ID = int(os.environ.get("SERVER_ID"))    # Discord szerver ID
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID"))  # Discord csatorna ID
+PORT = int(os.environ.get("PORT", 3000))       # Railway adja a PORT-ot
 
 # Discord bot setup
 intents = discord.Intents.default()
@@ -19,30 +18,42 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Flask setup a webhookhoz
 app = Flask(__name__)
 
+# Egy aszinkron Queue a webhook üzenetek tárolásához
+message_queue = asyncio.Queue()
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
-    print("Webhook received:", data)  # Debug: lássuk mi érkezik
+    print("Webhook received:", data)
     discord_id_raw = data.get("discordId")
     result = data.get("result")
-    
+
     if not discord_id_raw or not result:
         print("Invalid webhook data")
-        return "Bad Request", 400
+        return jsonify({"status": "error", "message": "Missing discordId or result"}), 400
 
     try:
         discord_id = int(discord_id_raw)
     except Exception as e:
         print(f"Invalid Discord ID: {discord_id_raw}, error: {e}")
-        return "Bad Discord ID", 400
+        return jsonify({"status": "error", "message": "Invalid discordId"}), 400
 
-    # DM küldés
-    asyncio.run_coroutine_threadsafe(send_dm(discord_id, result), bot.loop)
+    # Üzenet berakása a queue-ba
+    message_queue.put_nowait((discord_id, result))
 
-    # Szerverre küldés a megadott csatornába
-    asyncio.run_coroutine_threadsafe(send_server_message(discord_id, result), bot.loop)
+    # Azonnali válasz a webhooknak
+    return jsonify({"status": "ok"}), 200
 
-    return "OK", 200
+async def message_worker():
+    await bot.wait_until_ready()
+    while True:
+        try:
+            discord_id, result = await message_queue.get()
+            await send_dm(discord_id, result)
+            await send_server_message(discord_id, result)
+        except Exception as e:
+            print(f"Worker error: {e}")
+        await asyncio.sleep(0.1)  # kis szünet a loopban
 
 async def send_dm(user_id, result):
     try:
@@ -66,13 +77,18 @@ async def send_server_message(user_id, result):
     except Exception as e:
         print(f"Server message error for channel {CHANNEL_ID}: {e}")
 
-# Flask futtatása külön threadben
-def run_flask():
-    print(f"Flask running on port {PORT}")
-    app.run(host="0.0.0.0", port=PORT)
+# Flask és Discord futtatása ugyanabban az async loopban
+def start_app():
+    loop = asyncio.get_event_loop()
+    # Indítsuk a queue worker-t
+    loop.create_task(message_worker())
+    # Indítsuk a Flask ASGI szerveren (Hypercorn)
+    import hypercorn.asyncio
+    from hypercorn.config import Config
+    config = Config()
+    config.bind = [f"0.0.0.0:{PORT}"]
+    loop.run_until_complete(hypercorn.asyncio.serve(app, config))
 
-threading.Thread(target=run_flask).start()
-
-# Discord bot indítása
-print("Bot starting...")
-bot.run(TOKEN)
+# Indítás
+if __name__ == "__main__":
+    asyncio.run(bot.start(TOKEN))  # Ez indítja a botot
