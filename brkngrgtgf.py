@@ -9,7 +9,6 @@ import threading
 TOKEN = os.environ["TOKEN"]
 SERVER_ID = int(os.environ["SERVER_ID"])
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
-ROLE_ID = int(os.environ["ROLE_ID"])
 ROLE_ID = int(os.environ.get("ROLE_ID"))
 PORT = int(os.environ.get("PORT", 8080))
 
@@ -50,32 +49,37 @@ async def process_messages():
 
 
 # ===== ACTIONS =====
-async def give_role(user_id: int):
+async def send_server_message(user_id, result):
     try:
         guild = bot.get_guild(SERVER_ID)
         if not guild:
-            print("Szerver nem található")
+            print("Guild nem található")
             return
 
-        member = guild.get_member(user_id)
+        member = await guild.fetch_member(user_id)
         if not member:
-            print("Felhasználó nincs a szerveren")
+            print("Member nem található")
             return
 
         role = guild.get_role(ROLE_ID)
         if not role:
-            print("Rang nem található")
+            print("Role nem található")
             return
 
         if role in member.roles:
-            print("Rang már megvan")
+            print("Felhasználónak már van rangja")
             return
 
-        await member.add_roles(role, reason="TG sikeres")
+        await member.add_roles(role)
         print(f"Rang kiosztva: {member.name}")
 
+        channel = bot.get_channel(CHANNEL_ID)
+        if channel:
+            await channel.send(f"<@{user_id}> megkapta a rangot 🎉")
+
     except Exception as e:
-        print(f"Role error: {e}")
+        print(f"ROLE ERROR: {e}")
+
 
 
 # ===== RUN API =====
