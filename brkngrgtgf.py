@@ -9,11 +9,12 @@ import threading
 TOKEN = os.environ.get("TOKEN")                # Discord bot token
 SERVER_ID = int(os.environ.get("SERVER_ID"))   # Discord szerver ID
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID")) # Discord csatorna ID
-PORT = int(os.environ.get("PORT", 8080))      # Railway automatikusan adja
+PORT = int(os.environ.get("PORT", 8080))      # Railway adja
 
 # Discord bot setup
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True  # Szükséges a content intent
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # FastAPI setup
@@ -28,7 +29,7 @@ async def webhook(request: Request):
     # DM küldés
     asyncio.create_task(send_dm(discord_id, result))
 
-    # Szerver csatornára küldés
+    # Szerver csatornába küldés
     asyncio.create_task(send_server_message(discord_id, result))
 
     return {"status": "ok"}
@@ -46,8 +47,15 @@ async def send_server_message(user_id, result):
         channel = bot.get_channel(CHANNEL_ID)
         if channel:
             await channel.send(f"<@{user_id}> Teszt eredmény: {result}")
+        else:
+            print("Csatorna nem található")
     except Exception as e:
         print(f"Server message error: {e}")
+
+# Discord ready event
+@bot.event
+async def on_ready():
+    print(f"Bot ready! Logged in as {bot.user}")
 
 # FastAPI futtatása külön szálon
 def run_api():
