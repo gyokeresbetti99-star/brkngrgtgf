@@ -6,9 +6,10 @@ from discord.ext import commands
 import threading
 
 # Környezeti változók
-TOKEN = os.environ.get("TOKEN")  # Discord bot token
-SERVER_ID = int(os.environ.get("SERVER_ID"))  # Discord szerver ID
-PORT = int(os.environ.get("PORT", 3000))  # Railway adja a PORT-ot
+TOKEN = os.environ.get("TOKEN")           # Discord bot token
+SERVER_ID = int(os.environ.get("1468407486041297125"))   # Discord szerver ID
+CHANNEL_ID = int(os.environ.get("1469401441926905916")) # Discord szöveges csatorna ID
+PORT = int(os.environ.get("PORT", 3000))      # Railway adja a PORT-ot
 
 # Discord bot setup
 intents = discord.Intents.default()
@@ -27,7 +28,7 @@ def webhook():
     # DM küldés
     asyncio.run_coroutine_threadsafe(send_dm(discord_id, result), bot.loop)
 
-    # Szerverre küldés
+    # Szerverre küldés a megadott csatornába
     asyncio.run_coroutine_threadsafe(send_server_message(discord_id, result), bot.loop)
 
     return "OK", 200
@@ -42,11 +43,9 @@ async def send_dm(user_id, result):
 
 async def send_server_message(user_id, result):
     try:
-        guild = bot.get_guild(SERVER_ID)
-        if guild:
-            channel = discord.utils.get(guild.text_channels)
-            if channel:
-                await channel.send(f"<@{user_id}> Teszt eredmény: {result}")
+        channel = bot.get_channel(CHANNEL_ID)
+        if channel:
+            await channel.send(f"<@{user_id}> Teszt eredmény: {result}")
     except Exception as e:
         print(f"Server message error: {e}")
 
