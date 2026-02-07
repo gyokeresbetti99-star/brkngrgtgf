@@ -51,7 +51,6 @@ async def process_queue():
             await send_server_message(discord_id, result)
 
             # ✅ csak akkor adjon rangot, ha sikeres
-            # Ha más szöveg jön a GAS-ból, ezt írd át (pl. "Sikeres", "OK", "PASS")
             if str(result).lower() in ["sikeres", "success", "ok", "pass", "true", "1"]:
                 await give_role(discord_id)
             else:
@@ -80,49 +79,70 @@ async def send_server_message(user_id, result):
     except Exception as e:
         print(f"Channel message error: {e}")
 
-async def give_role(user_id):
+# ===== ROLE (HARD DEBUG) =====
+async def give_role(user_id: int):
     try:
         guild = bot.get_guild(SERVER_ID)
         if not guild:
             print(f"❌ Guild not found. SERVER_ID={SERVER_ID} | bot guilds={[g.id for g in bot.guilds]}")
             return
 
-        # 1) próbáljuk cache-ből (ha megvan)
+        # Member: cache -> fetch fallback
         member = guild.get_member(user_id)
-
-        # 2) ha nincs, fetch (API)
-        if not member:
-            print("ℹ️ Member not in cache, fetching from Discord API...")
-            try:
-                member = await guild.fetch_member(user_id)
-            except discord.NotFound:
-                print("❌ Member not found on server (user is not in guild)")
-                return
+        if member is None:
+            print("ℹ️ Member not in cache -> fetch_member()")
+            member = await guild.fetch_member(user_id)
 
         role = guild.get_role(ROLE_ID)
-        if not role:
+        if role is None:
             print(f"❌ Role not found. ROLE_ID={ROLE_ID}")
-            print("ℹ️ Roles on server:", [r.id for r in guild.roles])
+            print("ℹ️ Available role IDs:", [r.id for r in guild.roles])
             return
 
-        # Bot role hierarchia ellenőrzés (nagyon gyakori hiba)
-        me = guild.me or await guild.fetch_member(bot.user.id)
-        if me.top_role <= role:
-            print(f"❌ Role hierarchy issue: bot top_role ({me.top_role.id}) <= target role ({role.id})")
-            print("➡️ Emeld a bot rangját a kiosztandó rang fölé a szerveren!")
+        # Bot saját member objektuma
+        bot_member = guild.get_member(bot.user.id)
+        if bot_member is None:
+            bot_member = await guild.fetch_member(bot.user.id)
+
+        # HARD DEBUG
+        print("====== ROLE DEBUG ======")
+        print(f"Guild: {guild.name} ({guild.id})")
+        print(f"Target member: {member} ({member.id})")
+        print(f"Target role: {role.name} ({role.id}) managed={role.managed}")
+        print(f"Bot top role: {bot_member.top_role.name} ({bot_member.top_role.id})")
+        print(f"Bot perms: manage_roles={bot_member.guild_permissions.manage_roles} admin={bot_member.guild_permissions.administrator}")
+        print("========================")
+
+        # 1) managed role nem osztható
+        if role.managed:
+            print("❌ Ez a role 'managed' (integráció/automata), Discord nem engedi kiosztani.")
             return
 
+        # 2) permission check
+        if not bot_member.guild_permissions.manage_roles and not bot_member.guild_permissions.administrator:
+            print("❌ Botnak nincs Manage Roles (guild szinten).")
+            return
+
+        # 3) hierarchia check
+        if bot_member.top_role <= role:
+            print("❌ Role hierarchy: bot top_role <= target role. Emeld a bot rangját még feljebb!")
+            return
+
+        # 4) már megvan?
         if role in member.roles:
-            print("ℹ️ Member already has the role")
+            print("ℹ️ Member already has role.")
             return
 
+        # 5) add role
         await member.add_roles(role, reason="Webhook alapú rangosztás")
-        print(f"✅ Role added: member={member} role={role.name} ({role.id})")
+        print(f"✅ ROLE ADDED OK -> {member} got {role.name}")
 
     except discord.Forbidden:
-        print("❌ Forbidden: Bot has no permission to manage roles OR role hierarchy is wrong.")
+        print("❌ Forbidden: Discord tiltja (legtöbbször hierarchy vagy nincs Manage Roles).")
+    except discord.NotFound:
+        print("❌ NotFound: a felhasználó nincs a szerveren (vagy rossz ID).")
     except Exception as e:
-        print(f"ROLE ERROR: {e}")
+        print(f"❌ ROLE ERROR: {type(e).__name__}: {e}")
 
 # ===== RUN API =====
 def run_api():
